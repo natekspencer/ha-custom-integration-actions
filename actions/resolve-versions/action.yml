@@ -1,0 +1,28 @@
+name: Resolve Home Assistant versions
+description: Build a test matrix from hacs.json and the latest Home Assistant releases
+inputs:
+  homeassistant-version:
+    description: Also test this Home Assistant version (e.g. 2026.8.0)
+    required: false
+    default: ""
+outputs:
+  matrix:
+    description: JSON matrix of channel, homeassistant-version and python-version
+    value: ${{ steps.resolve.outputs.matrix }}
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v7
+      with:
+        python-version: "3.x"
+
+    - name: Resolve versions
+      id: resolve
+      shell: bash
+      env:
+        HOMEASSISTANT_VERSION: ${{ inputs.homeassistant-version }}
+      run: |
+        python -m pip install packaging
+        matrix=$(python "$GITHUB_ACTION_PATH/../../scripts/resolve_versions.py" "$HOMEASSISTANT_VERSION")
+        echo "matrix=$matrix" >> "$GITHUB_OUTPUT"

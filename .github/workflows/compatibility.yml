@@ -1,0 +1,186 @@
+name: Home Assistant compatibility
+
+on:
+  workflow_call:
+    inputs:
+      homeassistant-version:
+        description: Also test this Home Assistant version (e.g. 2026.8.0)
+        required: false
+        type: string
+      requirements-file:
+        description: Requirements file of the integration
+        required: false
+        type: string
+        default: requirements_test.txt
+    secrets:
+      BUMP_PR_TOKEN:
+        description: Token for bump PRs, as PRs opened with the default token don't start workflows
+        required: false
+
+permissions: {}
+
+jobs:
+  versions:
+    name: Resolve Home Assistant versions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.resolve.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Resolve versions
+        id: resolve
+        uses: natekspencer/ha-custom-integration-actions/actions/resolve-versions@v0
+        with:
+          homeassistant-version: ${{ inputs.homeassistant-version }}
+
+  pytest:
+    name: Run tests (${{ matrix.channel }} ${{ matrix.homeassistant-version }})
+    needs: versions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # A beta breaking shouldn't block PRs, but must still fail the scheduled run
+    continue-on-error: ${{ matrix.channel == 'beta' && github.event_name != 'schedule' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.versions.outputs.matrix) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          # A beta can require a Python that has no final release yet
+          allow-prereleases: true
+
+      - name: Install test requirements
+        uses: natekspencer/ha-custom-integration-actions/actions/install-test-requirements@v0
+        with:
+          homeassistant-version: ${{ matrix.homeassistant-version }}
+          requirements-file: ${{ inputs.requirements-file }}
+
+      - name: Run pytest
+        run: python -m pytest
+
+  find-minimum:
+    name: Find required minimum
+    needs: pytest
+    if: ${{ !cancelled() && needs.pytest.result == 'failure' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      minimum-version: ${{ steps.find.outputs.minimum-version }}
+    steps:
+      - name: Check which versions failed
+        id: failed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          failed=$(gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" \
+            --jq '.jobs[] | select(.conclusion == "failure") | .name')
+          # If stable fails too, the code is broken and a new minimum won't help
+          if grep -q '(minimum ' <<< "$failed" && ! grep -q '(stable ' <<< "$failed"; then
+            echo "outdated=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout repository
+        if: steps.failed.outputs.outdated == 'true'
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Find the lowest passing version
+        id: find
+        if: steps.failed.outputs.outdated == 'true'
+        uses: natekspencer/ha-custom-integration-actions/actions/find-minimum-version@v0
+        with:
+          requirements-file: ${{ inputs.requirements-file }}
+
+      - name: Report the required version
+        if: steps.find.outputs.minimum-version != ''
+        env:
+          VERSION: ${{ steps.find.outputs.minimum-version }}
+        run: echo "::error file=hacs.json::Tests need Home Assistant $VERSION or newer, update hacs.json"
+
+  bump-minimum:
+    name: Open PR to bump minimum
+    needs: find-minimum
+    if: ${{ !cancelled() && needs.find-minimum.outputs.minimum-version != '' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Update hacs.json
+        env:
+          VERSION: ${{ needs.find-minimum.outputs.minimum-version }}
+        run: |
+          sed -i -E "s/(\"homeassistant\": \")[^\"]+/\1$VERSION/" hacs.json
+
+      - name: Open pull request
+        uses: peter-evans/create-pull-request@v8
+        with:
+          # PRs opened with the default token don't start pull_request workflows
+          token: ${{ secrets.BUMP_PR_TOKEN || github.token }}
+          branch: bump-ha-minimum
+          delete-branch: true
+          commit-message: Require Home Assistant ${{ needs.find-minimum.outputs.minimum-version }}
+          title: Require Home Assistant ${{ needs.find-minimum.outputs.minimum-version }}
+          body: |
+            Tests fail on the minimum version in `hacs.json`. ${{ needs.find-minimum.outputs.minimum-version }} is the lowest version they pass on.
+
+            Found by ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+  open-issue:
+    name: Open issue for new version failures
+    needs: pytest
+    if: ${{ !cancelled() && needs.pytest.result == 'failure' && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      issues: write
+    steps:
+      - name: Open an issue for each failing release
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" \
+            --jq '.jobs[] | select(.conclusion == "failure")
+              | select(.name | test("\\((stable|beta) "))
+              | [(.name | capture("\\((?<channel>\\w+) (?<version>[^)]+)\\)") | .channel, .version), .html_url]
+              | @tsv' |
+          while IFS=$'\t' read -r channel version url; do
+            # One issue per monthly release, so each beta doesn't open another
+            title="Tests fail on Home Assistant $(cut -d. -f1,2 <<< "$version")"
+            issue=$(TITLE="$title" gh issue list --state all --limit 1000 --search "in:title \"$title\"" --json number,state,title \
+              --jq '[.[] | select(.title == env.TITLE)] | sort_by(.state != "OPEN") | .[0] | select(.) | "\(.number) \(.state)"')
+            read -r number state <<< "$issue"
+            body="Tests fail on Home Assistant $version ($channel): $url"
+            if [ -z "$number" ]; then
+              gh issue create --title "$title" --body "$body"
+            elif [ "$state" = "CLOSED" ]; then
+              # Still failing, so bring the issue back instead of opening a duplicate
+              gh issue reopen "$number" --comment "$body"
+            fi
+          done
