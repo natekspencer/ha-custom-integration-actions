@@ -174,8 +174,9 @@ package and everything named in the requirements file are exempt. If that can't 
 satisfied, the install tries allowing pre-releases, then warns and drops the date limit.
 
 A release that still can't be installed fails with an error, as it is untested. This
-happens when a very old test package pins something no longer on PyPI, and the fix is
-to raise the minimum in `hacs.json`.
+happens when a very old test package pins something no longer on PyPI. When that is
+the minimum, the search for a new one skips any version it can't install and lists
+them in the bump PR, so check that list before merging.
 
 ## Releasing
 

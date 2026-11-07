@@ -32,9 +32,13 @@ def log(message: str) -> None:
     print(message, file=sys.stderr)
 
 
-def setup_failed(homeassistant: Version) -> SystemExit:
+class SetupFailed(SystemExit):
+    """A Home Assistant version can't be installed, so it is untested."""
+
+
+def setup_failed(homeassistant: Version) -> SetupFailed:
     """Return the error for a version that can't be tested."""
-    return SystemExit(
+    return SetupFailed(
         f"::error::Could not install Home Assistant {homeassistant} and its test "
         "requirements. It is untested, see the install output above."
     )

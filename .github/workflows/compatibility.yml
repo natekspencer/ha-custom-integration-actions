@@ -86,6 +86,7 @@ jobs:
       contents: read
     outputs:
       minimum-version: ${{ steps.find.outputs.minimum-version }}
+      skipped-versions: ${{ steps.find.outputs.skipped-versions }}
     steps:
       - name: Check which versions failed
         id: failed
@@ -151,6 +152,8 @@ jobs:
           title: Require Home Assistant ${{ needs.find-minimum.outputs.minimum-version }}
           body: |
             Tests fail on the minimum version in `hacs.json`. ${{ needs.find-minimum.outputs.minimum-version }} is the lowest version they pass on.
+
+            ${{ needs.find-minimum.outputs.skipped-versions && format('These versions could not be installed, so were not tested: {0}', needs.find-minimum.outputs.skipped-versions) || '' }}
 
             Found by ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 

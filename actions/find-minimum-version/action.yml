@@ -13,6 +13,9 @@ outputs:
   minimum-version:
     description: The lowest passing version, empty if there is nothing to change
     value: ${{ steps.find.outputs.minimum-version }}
+  skipped-versions:
+    description: Versions that couldn't be installed, so were not tested
+    value: ${{ steps.find.outputs.skipped-versions }}
 runs:
   using: composite
   steps:
@@ -29,5 +32,4 @@ runs:
         RUN_TESTS: ${{ inputs.run-tests }}
       run: |
         python -m pip install packaging uv
-        version=$(python "$GITHUB_ACTION_PATH/../../scripts/find_minimum_version.py" "$REQUIREMENTS_FILE" "$RUN_TESTS")
-        echo "minimum-version=$version" >> "$GITHUB_OUTPUT"
+        python "$GITHUB_ACTION_PATH/../../scripts/find_minimum_version.py" "$REQUIREMENTS_FILE" "$RUN_TESTS"

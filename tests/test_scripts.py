@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import find_minimum_version as finder
 import install_test_requirements as install_module
 from packaging.version import Version
 import pytest
@@ -322,6 +323,53 @@ def test_tests_run_in_a_new_venv(monkeypatch: pytest.MonkeyPatch) -> None:
     assert runner.tests_pass_in_venv(Version("2026.11.0"), "r.txt", True, "3.14")
     assert commands[0][:4] == ("uv", "venv", "--python", "3.14")
     assert tested == [Path(commands[0][4], "bin", "python")]
+
+
+@pytest.mark.parametrize(
+    ("outcomes", "expected", "skipped"),
+    [
+        # Passes on the retest, so the failure was transient
+        ([True], None, []),
+        ([False, False, True], "2025.3.0", []),
+        ([False, False, False], None, []),
+        # A minimum that can't be installed is a reason to look further
+        (["setup", False, True], "2025.3.0", ["2025.1.0"]),
+        (["setup", "setup", True], "2025.3.0", ["2025.1.0", "2025.2.0"]),
+        (["setup", "setup", "setup"], None, ["2025.1.0", "2025.2.0", "2025.3.0"]),
+    ],
+)
+def test_find_minimum(
+    monkeypatch: pytest.MonkeyPatch,
+    outcomes: list[bool | str],
+    expected: str | None,
+    skipped: list[str],
+) -> None:
+    """Versions are tried oldest first, skipping those that can't be installed."""
+    results = iter(outcomes)
+
+    def fake_passes(*_: Any) -> bool:
+        result = next(results)
+        if result == "setup":
+            raise runner.SetupFailed("failed")
+        return bool(result)
+
+    monkeypatch.setattr(finder, "passes", fake_passes)
+    versions = [Version("2025.2.0"), Version("2025.3.0")]
+    found, not_tested = finder.find(Version("2025.1.0"), versions, "r.txt", True)
+    assert found == (Version(expected) if expected else None)
+    assert not_tested == [Version(version) for version in skipped]
+
+
+def test_report_writes_step_outputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The action reads the result from the step outputs."""
+    output = tmp_path / "output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    finder.report(Version("2025.3.0"), [Version("2025.1.0"), Version("2025.2.0")])
+    assert output.read_text() == (
+        "minimum-version=2025.3.0\nskipped-versions=2025.1.0, 2025.2.0\n"
+    )
 
 
 def test_no_hacs_json_has_no_minimum(
