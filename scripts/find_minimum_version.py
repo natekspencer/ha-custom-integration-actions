@@ -2,10 +2,12 @@
 
 Usage: find_minimum_version.py REQUIREMENTS_FILE RUN_TESTS
 
-Retests the minimum first, in case its failure was transient. Then tries each
-release up to the latest stable one, oldest first, each on the Python version it
-requires. Reports no version if the tests pass on the minimum or fail on all of
-the newer releases.
+Retests the minimum first, in case its failure was transient. Then tries the first
+release of each month up to the latest stable one, oldest first, as that is where
+breaking changes land. When one passes, steps back through the patch releases of
+the month before it, as one of those may have fixed the failure. Each runs on the
+Python version it requires. Reports no version if the tests pass on the minimum or
+fail on all of the newer releases.
 
 A version that can't be installed is skipped and reported, as old test packages
 can pin something that is no longer on PyPI. Stopping there would leave a minimum
@@ -42,19 +44,39 @@ def report(version: Version | None, skipped: list[Version]) -> None:
         print(lines, end="")
 
 
+def months(versions: list[Version]) -> list[list[Version]]:
+    """Group sorted versions by the month they were released in."""
+    groups: dict[tuple[int, int], list[Version]] = {}
+    for version in versions:
+        groups.setdefault((version.major, version.minor), []).append(version)
+    return list(groups.values())
+
+
 def find(
     minimum: Version, candidates: list[Version], requirements_file: str, run_tests: bool
 ) -> tuple[Version | None, list[Version]]:
     """Return the lowest passing version, if it isn't the minimum, and those skipped."""
-    skipped = []
-    for version in (minimum, *candidates):
+    skipped: list[Version] = []
+
+    def check(version: Version) -> bool:
+        """Return whether a version passes, skipping it if it can't be installed."""
         try:
-            if passes(version, requirements_file, run_tests):
-                return (None if version == minimum else version), skipped
+            return passes(version, requirements_file, run_tests)
         except SetupFailed:
             print(f"::warning::Skipping Home Assistant {version}", file=sys.stderr)
             skipped.append(version)
-    return None, skipped
+            return False
+
+    groups = months([minimum, *candidates])
+    for index, group in enumerate(groups):
+        if not check(group[0]):
+            continue
+        if index == 0:
+            return None, skipped
+        passing = next(filter(check, groups[index - 1][1:]), group[0])
+        return passing, skipped
+    # No month started out passing, so only the latest month's patches are left
+    return next(filter(check, groups[-1][1:]), None), skipped
 
 
 def main() -> None:

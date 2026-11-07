@@ -325,39 +325,97 @@ def test_tests_run_in_a_new_venv(monkeypatch: pytest.MonkeyPatch) -> None:
     assert tested == [Path(commands[0][4], "bin", "python")]
 
 
+RELEASES = ["2025.1.1", "2025.2.0", "2025.2.1", "2025.2.2", "2025.3.0", "2025.3.1"]
+
+
 @pytest.mark.parametrize(
-    ("outcomes", "expected", "skipped"),
+    ("passing", "broken", "expected", "tried", "skipped"),
     [
-        # Passes on the retest, so the failure was transient
-        ([True], None, []),
-        ([False, False, True], "2025.3.0", []),
-        ([False, False, False], None, []),
-        # A minimum that can't be installed is a reason to look further
-        (["setup", False, True], "2025.3.0", ["2025.1.0"]),
-        (["setup", "setup", True], "2025.3.0", ["2025.1.0", "2025.2.0"]),
-        (["setup", "setup", "setup"], None, ["2025.1.0", "2025.2.0", "2025.3.0"]),
+        pytest.param(
+            "2025.1.0", "", None, "2025.1.0", "", id="minimum-passes-on-retest"
+        ),
+        pytest.param(
+            "2025.3.0 2025.3.1",
+            "",
+            "2025.3.0",
+            "2025.1.0 2025.2.0 2025.3.0 2025.2.1 2025.2.2",
+            "",
+            id="first-month-to-pass",
+        ),
+        pytest.param(
+            "2025.2.2 2025.3.0 2025.3.1",
+            "",
+            "2025.2.2",
+            "2025.1.0 2025.2.0 2025.3.0 2025.2.1 2025.2.2",
+            "",
+            id="patch-of-previous-month",
+        ),
+        pytest.param(
+            "2025.1.1 2025.2.0",
+            "",
+            "2025.1.1",
+            "2025.1.0 2025.2.0 2025.1.1",
+            "",
+            id="patch-of-minimum-month",
+        ),
+        pytest.param(
+            "2025.3.1",
+            "",
+            "2025.3.1",
+            "2025.1.0 2025.2.0 2025.3.0 2025.3.1",
+            "",
+            id="patch-of-latest-month",
+        ),
+        pytest.param(
+            "",
+            "",
+            None,
+            "2025.1.0 2025.2.0 2025.3.0 2025.3.1",
+            "",
+            id="nothing-passes",
+        ),
+        pytest.param(
+            "2025.2.0",
+            "2025.1.0 2025.1.1",
+            "2025.2.0",
+            "2025.1.0 2025.2.0 2025.1.1",
+            "2025.1.0 2025.1.1",
+            id="minimum-cannot-install",
+        ),
+        pytest.param(
+            "2025.2.1 2025.3.0",
+            "2025.2.0",
+            "2025.2.1",
+            "2025.1.0 2025.2.0 2025.3.0 2025.2.1",
+            "2025.2.0",
+            id="month-cannot-install-but-patch-can",
+        ),
     ],
 )
 def test_find_minimum(
     monkeypatch: pytest.MonkeyPatch,
-    outcomes: list[bool | str],
+    passing: str,
+    broken: str,
     expected: str | None,
-    skipped: list[str],
+    tried: str,
+    skipped: str,
 ) -> None:
-    """Versions are tried oldest first, skipping those that can't be installed."""
-    results = iter(outcomes)
+    """Months are tried first, then the patches of the month before the first pass."""
+    attempts: list[str] = []
 
-    def fake_passes(*_: Any) -> bool:
-        result = next(results)
-        if result == "setup":
+    def fake_passes(version: Version, *_: Any) -> bool:
+        attempts.append(str(version))
+        if str(version) in broken.split():
             raise runner.SetupFailed("failed")
-        return bool(result)
+        return str(version) in passing.split()
 
     monkeypatch.setattr(finder, "passes", fake_passes)
-    versions = [Version("2025.2.0"), Version("2025.3.0")]
-    found, not_tested = finder.find(Version("2025.1.0"), versions, "r.txt", True)
+    found, not_tested = finder.find(
+        Version("2025.1.0"), [Version(v) for v in RELEASES], "r.txt", True
+    )
     assert found == (Version(expected) if expected else None)
-    assert not_tested == [Version(version) for version in skipped]
+    assert attempts == tried.split()
+    assert not_tested == [Version(version) for version in skipped.split()]
 
 
 def test_report_writes_step_outputs(
