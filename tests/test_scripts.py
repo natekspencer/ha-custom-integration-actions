@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import install_test_requirements as install_module
 from packaging.version import Version
 import pytest
 import resolve_versions
+import run_integration_tests as runner
 
 
 def file(version_yanked: bool = False) -> dict[str, Any]:
@@ -141,19 +143,19 @@ def test_named_packages(tmp_path: Path) -> None:
 
 
 def install_with(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, results: list[bool]
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, results: list[int]
 ) -> tuple[bool, list[tuple[str, ...]]]:
     """Install with faked command results, returning the commands run."""
     commands: list[tuple[str, ...]] = []
 
-    def fake_run(*command: str | Path) -> bool:
+    def fake_run(*command: str | Path) -> int:
         commands.append(tuple(map(str, command)))
         return results[len(commands) - 1]
 
     monkeypatch.setattr(install_module, "run", fake_run)
     requirements = tmp_path / "requirements.txt"
     requirements.write_text("serialx\n")
-    result = install_module.install(Version("2025.11.0"), requirements, ("--system",))
+    result = install_module.install(Version("2025.11.0"), requirements, "python")
     return result, commands
 
 
@@ -161,7 +163,7 @@ def test_install_limits_dependencies_to_release_date(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Dependencies stop at the release date, except for named packages."""
-    result, commands = install_with(monkeypatch, tmp_path, [True])
+    result, commands = install_with(monkeypatch, tmp_path, [0])
     assert result
     assert len(commands) == 1
     command = commands[0]
@@ -178,11 +180,116 @@ def test_install_limits_dependencies_to_release_date(
     }
 
 
-def test_install_drops_the_limit_when_unsatisfiable(
+def test_install_tries_prereleases_then_drops_the_limit(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A requirement needing something newer doesn't stop the install."""
-    result, commands = install_with(monkeypatch, tmp_path, [False, True])
-    assert result
-    assert "--exclude-newer" in commands[0]
-    assert "--exclude-newer" not in commands[1]
+    """Each fallback is tried in turn, and failing them all is reported."""
+    result, commands = install_with(monkeypatch, tmp_path, [1, 1, 1])
+    assert not result
+    assert "--prerelease" not in commands[0]
+    assert "--exclude-newer" in commands[1] and "--prerelease" in commands[1]
+    assert "--exclude-newer" not in commands[2]
+
+
+def test_no_minimum_tests_stable_with_a_warning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A hacs.json without a version skips the minimum channel."""
+    (tmp_path / "hacs.json").write_text('{"name": "Example"}')
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["resolve_versions.py", ""])
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    resolve_versions.main()
+    captured = capsys.readouterr()
+    assert "::warning::No homeassistant version" in captured.err
+    channels = [entry["channel"] for entry in json.loads(captured.out)["include"]]
+    assert channels == ["stable", "beta"]
+
+
+def test_requirements_come_from_manifests_and_their_dependencies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Requirements of Home Assistant dependencies are followed recursively."""
+    domain = tmp_path / "custom_components" / "example"
+    domain.mkdir(parents=True)
+    (domain / "manifest.json").write_text(
+        '{"requirements": ["lib==1"], "dependencies": ["http", "http"],'
+        ' "after_dependencies": ["unknown"]}'
+    )
+    (domain / "camera.py").write_text(
+        "from homeassistant.components.camera import Camera\n"
+    )
+    components = tmp_path / "components"
+    for name, manifest in (
+        ("camera", '{"requirements": ["PyTurboJPEG==1"]}'),
+        ("http", '{"requirements": ["aiohttp==3"], "dependencies": ["network"]}'),
+        ("network", '{"requirements": ["ifaddr==1"]}'),
+    ):
+        (components / name).mkdir(parents=True)
+        (components / name / "manifest.json").write_text(manifest)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        install_module.subprocess,
+        "run",
+        lambda *_, **__: SimpleNamespace(stdout=f"{components}\n"),
+    )
+    assert install_module.integration_requirements() == ["lib==1"]
+    assert sorted(install_module.dependency_requirements("python")) == [
+        "PyTurboJPEG==1",
+        "aiohttp==3",
+        "ifaddr==1",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("loads", "own_code", "expected"),
+    [(True, 0, True), (True, 5, True), (True, 1, False), (False, 0, False)],
+)
+def test_tests_pass(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    loads: bool,
+    own_code: int,
+    expected: bool,
+) -> None:
+    """Having no tests is fine, but both the load check and tests must pass."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(runner, "install_manifest_requirements", lambda *_: None)
+    monkeypatch.setattr(runner, "integration_loads", lambda _: loads)
+    monkeypatch.setattr(runner, "run", lambda *_, **__: own_code)
+    assert (
+        runner.tests_pass(Version("2026.11.0"), "missing.txt", "python") is expected
+    )
+
+
+def test_run_tests_false_only_checks_loading(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Opting out skips the integration's own tests."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(runner, "install_manifest_requirements", lambda *_: None)
+    monkeypatch.setattr(runner, "integration_loads", lambda _: True)
+    monkeypatch.setattr(runner, "run", lambda *_, **__: pytest.fail("pytest ran"))
+    assert runner.tests_pass(Version("2026.11.0"), "missing.txt", "python", False)
+
+
+def test_no_hacs_json_has_no_minimum(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An integration outside of HACS has no declared minimum."""
+    monkeypatch.chdir(tmp_path)
+    assert resolve_versions.declared_minimum() is None
+
+
+def test_hidden_directories_are_ignored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only real integration directories count."""
+    for name in ("example", ".example"):
+        domain = tmp_path / "custom_components" / name
+        domain.mkdir(parents=True)
+        (domain / "manifest.json").write_text(f'{{"domain": "{name}"}}')
+    monkeypatch.chdir(tmp_path)
+    assert install_module.manifests() == [{"domain": "example"}]

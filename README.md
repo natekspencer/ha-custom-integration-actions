@@ -5,11 +5,12 @@ versions they claim to support.
 
 ## What it does
 
-The `compatibility` workflow tests an integration on:
+The `compatibility` workflow checks that an integration loads, runs its tests if it
+has any, and does both on:
 
 | Channel   | Home Assistant version                              |
 | --------- | --------------------------------------------------- |
-| `minimum` | The `homeassistant` version declared in `hacs.json` |
+| `minimum` | The `homeassistant` version declared in `hacs.json`, if any |
 | `stable`  | The latest release                                  |
 | `beta`    | The latest pre-release, while newer than stable     |
 | `manual`  | The `homeassistant-version` input, if given         |
@@ -20,10 +21,11 @@ stable or a beta opens one issue per monthly release.
 
 ## Usage
 
-Add `.github/workflows/compatibility.yml` to the integration:
+Add a `compatibility` job to the integration's validation workflow, here alongside
+hassfest and HACS in `.github/workflows/validate.yml`:
 
 ```yaml
-name: Home Assistant compatibility
+name: Validate repo
 
 on:
   push:
@@ -32,7 +34,7 @@ on:
   pull_request:
   schedule:
     # Daily, to catch new Home Assistant releases and betas
-    - cron: "17 6 * * *"
+    - cron: "0 0 * * *"
   workflow_dispatch:
     inputs:
       homeassistant-version:
@@ -40,13 +42,29 @@ on:
         required: false
         type: string
 
-permissions: {}
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  hassfest:
+    name: Validate with hassfest
+    runs-on: "ubuntu-latest"
+    steps:
+      - uses: "actions/checkout@v7"
+        with:
+          persist-credentials: false
+      - uses: "home-assistant/actions/hassfest@master"
+  hacs:
+    name: Validate with HACS
+    runs-on: "ubuntu-latest"
+    steps:
+      - uses: "hacs/action@main"
+        with:
+          category: "integration"
   compatibility:
     name: Compatibility
     permissions:
@@ -61,15 +79,73 @@ jobs:
       BUMP_PR_TOKEN: ${{ secrets.BUMP_PR_TOKEN }}
 ```
 
-The integration needs a `hacs.json` with a `homeassistant` version, a requirements
-file and pytest configuration.
+The job needs its own `permissions`, as it opens bump PRs and issues.
+
+### Requirements
+
+| File                                      | Needed                                                                  |
+| ----------------------------------------- | ----------------------------------------------------------------------- |
+| `custom_components/<domain>/manifest.json` | Yes                                                                     |
+| `hacs.json`                               | Without a `homeassistant` version, the minimum is skipped with a warning |
+| `requirements_test.txt`                   | Only for packages the integration's own tests need                      |
+| Tests                                     | No, but see below. pytest finds them using the repository's configuration |
+
+An integration with no tests still gets the standard check. The integration must be in
+`custom_components/<domain>/`, so `content_in_root` in `hacs.json` isn't supported.
+
+## The standard check
+
+Every run first imports each module of the integration, with only what its manifest
+provides: its `requirements`, and those of the Home Assistant integrations it lists
+in `dependencies` and `after_dependencies` or imports from. No setup is needed.
+
+This fails on Home Assistant APIs that were removed. A package missing from the
+manifest is a warning on `manifest.json`, and that module is skipped. It isn't a
+failure because Home Assistant's container images include the requirements of its
+built-in integrations, so the integration often still works there, and raising the
+minimum version wouldn't fix it. `requirements_test.txt` isn't installed yet, so it
+can't hide a missing requirement.
+
+This shows that the integration loads, not that it works, so it doesn't replace real
+tests.
+
+## Adding tests
+
+Add tests, `requirements_test.txt` for anything they need, and this to `pyproject.toml`.
+Without `asyncio_mode = "auto"`, async fixtures fail:
+
+```toml
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+pythonpath = ["."]
+testpaths = ["tests"]
+```
+
+From Home Assistant 2026.11 the test package is `pytest-homeassistant`, so tests that
+run on older versions too need to import from either one:
+
+```python
+try:
+    from pytest_homeassistant.common import MockConfigEntry
+except ImportError:
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+```
+
+The workflow runs pytest with `-p no:respx`, so that Home Assistant can install its
+httpx alias first. To run the tests locally on recent versions, add
+`addopts = "-p no:respx"` too.
 
 ### Inputs
 
 | Input                   | Default                 | Description                             |
 | ----------------------- | ----------------------- | --------------------------------------- |
 | `homeassistant-version` |                         | Also test this Home Assistant version   |
-| `requirements-file`     | `requirements_test.txt` | Requirements file of the integration    |
+| `requirements-file`     | `requirements_test.txt` | Requirements file for the integration's tests, used if it exists |
+| `run-tests`             | `true`                  | Run the integration's own tests as well as the standard check |
+
+Own tests run by default, as other CI usually only covers one Home Assistant version.
+With `run-tests: false`, bump PRs are based only on whether the integration loads.
 
 ### Secrets
 
@@ -95,7 +171,11 @@ Home Assistant doesn't pin all of its transitive dependencies, so a fresh instal
 an older release can pull in versions it never ran with. Dependencies are therefore
 resolved as of the release date of the version under test. Home Assistant, the test
 package and everything named in the requirements file are exempt. If that can't be
-satisfied, the install warns and tries again without the date limit.
+satisfied, the install tries allowing pre-releases, then warns and drops the date limit.
+
+A release that still can't be installed fails with an error, as it is untested. This
+happens when a very old test package pins something no longer on PyPI, and the fix is
+to raise the minimum in `hacs.json`.
 
 ## Releasing
 

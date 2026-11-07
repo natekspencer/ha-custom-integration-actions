@@ -1,7 +1,4 @@
-#!/usr/bin/env python3
-"""Install an integration's test requirements for a Home Assistant version.
-
-Usage: install_test_requirements.py HOMEASSISTANT_VERSION REQUIREMENTS_FILE
+"""Install what an integration needs on a Home Assistant version.
 
 The test package may lag behind Home Assistant, so the exact version is forced
 with an override.
@@ -15,11 +12,14 @@ example because a requirement needs something newer, the date limit is dropped.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping
+import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
+from typing import Any
 
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.version import Version
@@ -29,6 +29,7 @@ from resolve_versions import pypi, releases
 TEST_PACKAGE = "pytest-homeassistant"
 # Covers older versions. Remove once no integration tests below 2026.11.
 LEGACY_TEST_PACKAGE = "pytest-homeassistant-custom-component"
+COMPONENT_IMPORT = re.compile(r"\bhomeassistant\.components\.(\w+)")
 
 
 def homeassistant_pin(requires: list[str]) -> Version | None:
@@ -80,24 +81,87 @@ def named_packages(requirements_file: str | Path) -> list[str]:
     return names
 
 
-def run(*command: str | Path) -> bool:
+def manifests() -> list[dict[str, Any]]:
+    """Return the manifests of the integrations in the repository."""
+    return [
+        json.loads(path.read_text())
+        for path in sorted(Path("custom_components").glob("*/manifest.json"))
+        if not path.parent.name.startswith(".")
+    ]
+
+
+def integration_requirements() -> list[str]:
+    """Return the requirements the integration's manifests declare."""
+    return [
+        requirement
+        for manifest in manifests()
+        for requirement in manifest.get("requirements", [])
+    ]
+
+
+def dependencies(manifest: dict[str, Any]) -> list[str]:
+    """Return the integrations a manifest depends on."""
+    return manifest.get("dependencies", []) + manifest.get("after_dependencies", [])
+
+
+def imported_components() -> set[str]:
+    """Return the Home Assistant integrations the code imports from.
+
+    An integration with a camera platform doesn't list camera as a dependency, as
+    Home Assistant sets it up when it loads the platform.
+    """
+    return {
+        domain
+        for path in Path("custom_components").rglob("*.py")
+        for domain in COMPONENT_IMPORT.findall(path.read_text())
+    }
+
+
+def dependency_requirements(python: str | Path) -> list[str]:
+    """Return the requirements of the Home Assistant integrations depended on.
+
+    Home Assistant installs these at runtime, so a fresh install doesn't have them.
+    """
+    result = subprocess.run(
+        (python, "-c", "import homeassistant.components as c; print(c.__path__[0])"),
+        check=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    components = Path(result.stdout.strip())
+    requirements: list[str] = []
+    seen: set[str] = set()
+    pending = [
+        *imported_components(),
+        *(domain for manifest in manifests() for domain in dependencies(manifest)),
+    ]
+    while pending:
+        domain = pending.pop()
+        path = components / domain / "manifest.json"
+        if domain in seen or not path.exists():
+            continue
+        seen.add(domain)
+        manifest = json.loads(path.read_text())
+        requirements += manifest.get("requirements", [])
+        pending += dependencies(manifest)
+    return list(dict.fromkeys(requirements))
+
+
+def run(*command: str | Path, env: Mapping[str, str] | None = None) -> int:
     """Run a command, keeping stdout free for script results."""
-    result = subprocess.run(command, check=False, stdout=sys.stderr)
-    return result.returncode == 0
+    return subprocess.run(command, check=False, env=env, stdout=sys.stderr).returncode
 
 
 def install(
-    homeassistant: Version,
-    requirements_file: str | Path,
-    target: Sequence[str | Path],
+    homeassistant: Version, requirements_file: str | Path, python: str | Path
 ) -> bool:
-    """Install the test requirements into the target, returning whether it worked."""
+    """Install requirements into a Python, returning whether it worked."""
     package = test_package(homeassistant)
     with TemporaryDirectory() as tmp:
         overrides = Path(tmp, "overrides.txt")
         overrides.write_text(f"homeassistant=={homeassistant}\n")
         command = (
-            *("uv", "pip", "install", *target),
+            *("uv", "pip", "install", "--python", python),
             *("--requirement", requirements_file),
             *(package, "--override", overrides),
         )
@@ -106,24 +170,17 @@ def install(
             package.partition("==")[0],
             *named_packages(requirements_file),
         ]
-        limit = ("--exclude-newer", release_date(homeassistant))
+        limit: tuple[str, ...] = ("--exclude-newer", release_date(homeassistant))
         for name in exempt:
             limit += ("--exclude-newer-package", f"{name}=false")
-        if run(*command, *limit):
-            return True
-        print(
-            f"::warning::Installing without the {homeassistant} release date limit",
-            file=sys.stderr,
-        )
-        return run(*command)
-
-
-def main() -> None:
-    """Install into the active Python."""
-    homeassistant, requirements_file = sys.argv[1:3]
-    if not install(Version(homeassistant), requirements_file, ("--system",)):
-        raise SystemExit(f"Could not set up Home Assistant {homeassistant}")
-
-
-if __name__ == "__main__":
-    main()
+        # Some releases pin a pre-release of a dependency
+        attempts = (limit, (*limit, "--prerelease", "allow"), ())
+        for attempt in attempts:
+            if not attempt:
+                print(
+                    f"::warning::Installing without the {homeassistant} release date limit",
+                    file=sys.stderr,
+                )
+            if run(*command, *attempt) == 0:
+                return True
+        return False

@@ -8,10 +8,15 @@ on:
         required: false
         type: string
       requirements-file:
-        description: Requirements file of the integration
+        description: Requirements file for the integration's tests, used if it exists
         required: false
         type: string
         default: requirements_test.txt
+      run-tests:
+        description: Run the integration's own tests as well as the standard check
+        required: false
+        type: boolean
+        default: true
     secrets:
       BUMP_PR_TOKEN:
         description: Token for bump PRs, as PRs opened with the default token don't start workflows
@@ -63,14 +68,12 @@ jobs:
           # A beta can require a Python that has no final release yet
           allow-prereleases: true
 
-      - name: Install test requirements
-        uses: natekspencer/ha-custom-integration-actions/actions/install-test-requirements@v0
+      - name: Test integration
+        uses: natekspencer/ha-custom-integration-actions/actions/test-integration@v0
         with:
           homeassistant-version: ${{ matrix.homeassistant-version }}
           requirements-file: ${{ inputs.requirements-file }}
-
-      - name: Run pytest
-        run: python -m pytest
+          run-tests: ${{ inputs.run-tests }}
 
   find-minimum:
     name: Find required minimum
@@ -109,6 +112,7 @@ jobs:
         uses: natekspencer/ha-custom-integration-actions/actions/find-minimum-version@v0
         with:
           requirements-file: ${{ inputs.requirements-file }}
+          run-tests: ${{ inputs.run-tests }}
 
       - name: Report the required version
         if: steps.find.outputs.minimum-version != ''

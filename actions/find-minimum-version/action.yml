@@ -2,9 +2,13 @@ name: Find minimum Home Assistant version
 description: Find the lowest Home Assistant version newer than hacs.json that tests pass on
 inputs:
   requirements-file:
-    description: Requirements file of the integration
+    description: Requirements file for the integration's tests, used if it exists
     required: false
     default: requirements_test.txt
+  run-tests:
+    description: Run the integration's own tests as well as the standard check
+    required: false
+    default: "true"
 outputs:
   minimum-version:
     description: The lowest passing version, empty if there is nothing to change
@@ -22,7 +26,8 @@ runs:
       shell: bash
       env:
         REQUIREMENTS_FILE: ${{ inputs.requirements-file }}
+        RUN_TESTS: ${{ inputs.run-tests }}
       run: |
         python -m pip install packaging uv
-        version=$(python "$GITHUB_ACTION_PATH/../../scripts/find_minimum_version.py" "$REQUIREMENTS_FILE")
+        version=$(python "$GITHUB_ACTION_PATH/../../scripts/find_minimum_version.py" "$REQUIREMENTS_FILE" "$RUN_TESTS")
         echo "minimum-version=$version" >> "$GITHUB_OUTPUT"

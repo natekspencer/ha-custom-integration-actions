@@ -2,7 +2,7 @@
 """Print the GitHub Actions matrix of Home Assistant versions to test against.
 
 Channels:
-  minimum  the version declared in hacs.json
+  minimum  the version declared in hacs.json, if any
   stable   the latest Home Assistant release
   beta     the latest pre-release, while it is newer than stable
   manual   the version passed as an argument, if any
@@ -68,9 +68,11 @@ def releases(package: str) -> list[Version]:
     )
 
 
-def declared_minimum() -> Version:
-    """Return the minimum Home Assistant version declared in hacs.json."""
-    return Version(json.loads(Path("hacs.json").read_text())["homeassistant"])
+def declared_minimum() -> Version | None:
+    """Return the minimum Home Assistant version declared in hacs.json, if any."""
+    path = Path("hacs.json")
+    minimum = json.loads(path.read_text()).get("homeassistant") if path.exists() else None
+    return Version(minimum) if minimum else None
 
 
 def python_version(homeassistant: Version) -> str:
@@ -112,10 +114,14 @@ def main() -> None:
     """Print the matrix as JSON."""
     homeassistant = releases("homeassistant")
     stable = next(version for version in homeassistant if not version.is_prerelease)
-    channels = {
-        "minimum": declared_minimum(),
-        "stable": stable,
-    }
+    channels = {"stable": stable}
+    if minimum := declared_minimum():
+        channels = {"minimum": minimum, **channels}
+    else:
+        print(
+            "::warning::No homeassistant version in hacs.json, so no minimum to test",
+            file=sys.stderr,
+        )
     if homeassistant[0] > stable:
         channels["beta"] = homeassistant[0]
     if len(sys.argv) > 1 and sys.argv[1]:
