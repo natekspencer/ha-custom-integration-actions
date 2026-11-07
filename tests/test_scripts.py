@@ -260,7 +260,8 @@ def test_tests_pass(
     monkeypatch.setattr(runner, "install_manifest_requirements", lambda *_: None)
     monkeypatch.setattr(runner, "integration_loads", lambda _: loads)
     monkeypatch.setattr(runner, "run", lambda *_, **__: own_code)
-    assert runner.tests_pass(Version("2026.11.0"), "missing.txt", "python") is expected
+    outcome = runner.test_version(Version("2026.11.0"), "missing.txt", "python")
+    assert outcome.passed is expected
 
 
 def test_run_tests_false_only_checks_loading(
@@ -271,7 +272,8 @@ def test_run_tests_false_only_checks_loading(
     monkeypatch.setattr(runner, "install_manifest_requirements", lambda *_: None)
     monkeypatch.setattr(runner, "integration_loads", lambda _: True)
     monkeypatch.setattr(runner, "run", lambda *_, **__: pytest.fail("pytest ran"))
-    assert runner.tests_pass(Version("2026.11.0"), "missing.txt", "python", False)
+    outcome = runner.test_version(Version("2026.11.0"), "missing.txt", "python", False)
+    assert outcome.passed
 
 
 def test_imported_components_only_counts_real_imports(
@@ -314,13 +316,13 @@ def test_tests_run_in_a_new_venv(monkeypatch: pytest.MonkeyPatch) -> None:
         commands.append(tuple(map(str, command)))
         return 0
 
-    def fake_tests_pass(_: Version, __: str, python: Path, ___: bool) -> bool:
+    def fake_test_version(_: Version, __: str, python: Path, ___: bool) -> Any:
         tested.append(python)
-        return True
+        return runner.Outcome(True, True)
 
     monkeypatch.setattr(runner, "run", fake_run)
-    monkeypatch.setattr(runner, "tests_pass", fake_tests_pass)
-    assert runner.tests_pass_in_venv(Version("2026.11.0"), "r.txt", True, "3.14")
+    monkeypatch.setattr(runner, "test_version", fake_test_version)
+    assert runner.test_version_in_venv(Version("2026.11.0"), "r.txt", True, "3.14")
     assert commands[0][:4] == ("uv", "venv", "--python", "3.14")
     assert tested == [Path(commands[0][4], "bin", "python")]
 
@@ -419,19 +421,62 @@ def test_find_minimum(
     """Months are tried first, then stepping back from the latest patch before it."""
     attempts: list[str] = []
 
-    def fake_passes(version: Version, *_: Any) -> bool:
+    def fake_run(version: Version, *_: Any) -> runner.Outcome:
         attempts.append(str(version))
         if str(version) in broken.split():
             raise runner.SetupFailed("failed")
-        return str(version) in passing.split()
+        return runner.Outcome(True, str(version) in passing.split())
 
-    monkeypatch.setattr(finder, "passes", fake_passes)
-    found, not_tested = finder.find(
+    monkeypatch.setattr(finder, "run", fake_run)
+    search = finder.find(
         Version("2025.1.0"), [Version(v) for v in RELEASES], "r.txt", True
     )
-    assert found == (Version(expected) if expected else None)
+    assert search.version == (Version(expected) if expected else None)
     assert attempts == tried.split()
-    assert not_tested == [Version(version) for version in skipped.split()]
+    assert search.skipped == [Version(version) for version in skipped.split()]
+
+
+@pytest.mark.parametrize(
+    ("loads", "expected"),
+    [
+        pytest.param("2025.2.0 2025.3.0", "2025.2.0", id="tests-behind"),
+        pytest.param("2025.3.0", None, id="loads-only-from-the-result"),
+    ],
+)
+def test_find_reports_where_the_integration_loads(
+    monkeypatch: pytest.MonkeyPatch, loads: str, expected: str | None
+) -> None:
+    """The version it loads from is only of interest below the new minimum."""
+
+    def fake_run(version: Version, *_: Any) -> runner.Outcome:
+        return runner.Outcome(str(version) in loads.split(), version.minor == 3)
+
+    monkeypatch.setattr(finder, "run", fake_run)
+    search = finder.find(
+        Version("2025.1.0"), [Version(v) for v in RELEASES], "r.txt", True
+    )
+    assert search.version == Version("2025.3.0")
+    assert search.loads_from == (Version(expected) if expected else None)
+
+
+def test_find_minimum_main(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The search runs from start to finish, from hacs.json to its result."""
+
+    def fake_run(version: Version, *_: Any) -> runner.Outcome:
+        return runner.Outcome(True, version >= Version("2026.11.0"))
+
+    (tmp_path / "hacs.json").write_text('{"homeassistant": "2025.11.0"}')
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    monkeypatch.setattr("sys.argv", ["find_minimum_version.py", "r.txt", "true"])
+    monkeypatch.setattr(finder, "run", fake_run)
+    monkeypatch.setattr(finder, "releases", resolve_versions.releases)
+    finder.main()
+    assert capsys.readouterr().out == (
+        "minimum-version=2026.11.0\nskipped-versions=\nloads-from=2025.11.0\n"
+    )
 
 
 def test_report_writes_step_outputs(
@@ -440,9 +485,17 @@ def test_report_writes_step_outputs(
     """The action reads the result from the step outputs."""
     output = tmp_path / "output"
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
-    finder.report(Version("2025.3.0"), [Version("2025.1.0"), Version("2025.2.0")])
+    finder.report(
+        finder.Search(
+            Version("2025.3.0"),
+            [Version("2025.1.0"), Version("2025.1.1")],
+            [Version("2025.2.0")],
+        )
+    )
     assert output.read_text() == (
-        "minimum-version=2025.3.0\nskipped-versions=2025.1.0, 2025.2.0\n"
+        "minimum-version=2025.3.0\n"
+        "skipped-versions=2025.1.0, 2025.1.1\n"
+        "loads-from=2025.2.0\n"
     )
 
 

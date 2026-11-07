@@ -20,6 +20,11 @@ they pass on and opens a PR to update `hacs.json`. It tries the first release of
 month until one passes, then steps back from the latest patch of the month before it. On scheduled runs, a failure on
 stable or a beta opens one issue per monthly release.
 
+Review bump PRs before merging, as HACS stops offering updates to users below the
+minimum. The new minimum is the lowest version everything passes on, which can be held
+back by the tests alone. If the integration loads on an earlier version, the PR says
+so, and fixing the tests may be better than raising the minimum.
+
 ## Usage
 
 Add a `compatibility` job to the integration's validation workflow, here alongside

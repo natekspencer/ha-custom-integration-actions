@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
+from typing import NamedTuple
 
 from install_test_requirements import (
     dependency_requirements,
@@ -30,6 +31,18 @@ NO_TESTS = 5
 def log(message: str) -> None:
     """Print to the log, keeping stdout free for script results."""
     print(message, file=sys.stderr)
+
+
+class Outcome(NamedTuple):
+    """What happened on a Home Assistant version."""
+
+    loads: bool
+    own_tests_passed: bool
+
+    @property
+    def passed(self) -> bool:
+        """Return whether everything passed."""
+        return self.loads and self.own_tests_passed
 
 
 class SetupFailed(SystemExit):
@@ -85,13 +98,13 @@ def own_tests_pass(python: str | Path) -> bool:
     return code == 0
 
 
-def tests_pass(
+def test_version(
     homeassistant: Version,
     requirements_file: str,
     python: str | Path,
     run_tests: bool = True,
-) -> bool:
-    """Return whether the integration passes on a Home Assistant version.
+) -> Outcome:
+    """Return how the integration does on a Home Assistant version.
 
     Exits if the version can't be set up, as that says nothing about the
     integration.
@@ -100,22 +113,22 @@ def tests_pass(
     install_manifest_requirements(homeassistant, python)
     loads = integration_loads(python)
     if not run_tests:
-        return loads
+        return Outcome(loads, True)
     if Path(requirements_file).exists() and not install(
         homeassistant, requirements_file, python
     ):
         raise setup_failed(homeassistant)
     # Run these even if it doesn't load, as they can show more of what is wrong
-    return own_tests_pass(python) and loads
+    return Outcome(loads, own_tests_pass(python))
 
 
-def tests_pass_in_venv(
+def test_version_in_venv(
     homeassistant: Version,
     requirements_file: str,
     run_tests: bool,
     python_request: str,
-) -> bool:
-    """Return whether the integration passes in a new virtual environment.
+) -> Outcome:
+    """Return how the integration does in a new virtual environment.
 
     Home Assistant pins uv as a dependency, so installing it next to the uv running
     the install would replace that with a version that may not support our options.
@@ -125,15 +138,16 @@ def tests_pass_in_venv(
         if run("uv", "venv", "--python", python_request, venv) != 0:
             raise setup_failed(homeassistant)
         python = venv / "bin" / "python"
-        return tests_pass(homeassistant, requirements_file, python, run_tests)
+        return test_version(homeassistant, requirements_file, python, run_tests)
 
 
 def main() -> None:
     """Test the integration, exiting with an error if it fails."""
     homeassistant, requirements_file, run_tests = sys.argv[1:4]
-    if not tests_pass_in_venv(
+    outcome = test_version_in_venv(
         Version(homeassistant), requirements_file, run_tests == "true", sys.executable
-    ):
+    )
+    if not outcome.passed:
         raise SystemExit(1)
 
 

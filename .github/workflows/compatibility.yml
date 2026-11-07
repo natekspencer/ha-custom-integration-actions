@@ -87,6 +87,7 @@ jobs:
     outputs:
       minimum-version: ${{ steps.find.outputs.minimum-version }}
       skipped-versions: ${{ steps.find.outputs.skipped-versions }}
+      loads-from: ${{ steps.find.outputs.loads-from }}
     steps:
       - name: Check which versions failed
         id: failed
@@ -118,8 +119,13 @@ jobs:
       - name: Report the required version
         if: steps.find.outputs.minimum-version != ''
         env:
+          LOADS_FROM: ${{ steps.find.outputs.loads-from }}
           VERSION: ${{ steps.find.outputs.minimum-version }}
-        run: echo "::error file=hacs.json::Tests need Home Assistant $VERSION or newer, update hacs.json"
+        run: |
+          echo "::error file=hacs.json::Tests need Home Assistant $VERSION or newer, update hacs.json"
+          if [ -n "$LOADS_FROM" ]; then
+            echo "::notice file=hacs.json::The integration loads from $LOADS_FROM, so its tests may just be behind"
+          fi
 
   bump-minimum:
     name: Open PR to bump minimum
@@ -152,6 +158,8 @@ jobs:
           title: Require Home Assistant ${{ needs.find-minimum.outputs.minimum-version }}
           body: |
             Tests fail on the minimum version in `hacs.json`. ${{ needs.find-minimum.outputs.minimum-version }} is the lowest version they pass on.
+
+            ${{ needs.find-minimum.outputs.loads-from && format('The integration loads from {0}, but its tests fail until {1}. If only the tests are behind, fixing them may be better than merging this, as HACS stops offering updates to users below the minimum.', needs.find-minimum.outputs.loads-from, needs.find-minimum.outputs.minimum-version) || '' }}
 
             ${{ needs.find-minimum.outputs.skipped-versions && format('These versions could not be installed, so were not tested: {0}', needs.find-minimum.outputs.skipped-versions) || '' }}
 

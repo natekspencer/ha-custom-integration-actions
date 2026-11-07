@@ -16,6 +16,9 @@ outputs:
   skipped-versions:
     description: Versions that couldn't be installed, so were not tested
     value: ${{ steps.find.outputs.skipped-versions }}
+  loads-from:
+    description: Lowest version the integration loaded on, if below minimum-version
+    value: ${{ steps.find.outputs.loads-from }}
 runs:
   using: composite
   steps:

@@ -13,29 +13,52 @@ A version that can't be installed is skipped and reported, as old test packages
 can pin something that is no longer on PyPI. Stopping there would leave a minimum
 that can never be tested. The result may be higher than needed if a version only
 failed to install temporarily, but it is proposed in a PR for review.
+
+Also reports the lowest version the integration loaded on, when that is below the
+result, as its tests may just be behind. Only the first release of most months is
+tried, so this is accurate to the month.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import os
 import sys
 
 from packaging.version import Version
 from resolve_versions import declared_minimum, python_version, releases
-from run_integration_tests import SetupFailed, tests_pass_in_venv
+from run_integration_tests import Outcome, SetupFailed, test_version_in_venv
 
 
-def passes(homeassistant: Version, requirements_file: str, run_tests: bool) -> bool:
-    """Return whether the integration passes on a Home Assistant version."""
+@dataclass
+class Search:
+    """The result of a search for a new minimum."""
+
+    version: Version | None = None
+    skipped: list[Version] = field(default_factory=list)
+    loaded_on: list[Version] = field(default_factory=list)
+
+    @property
+    def loads_from(self) -> Version | None:
+        """Return the lowest version it loaded on, if below the new minimum."""
+        lowest = min(self.loaded_on, default=None)
+        if lowest is None or self.version is None or lowest >= self.version:
+            return None
+        return lowest
+
+
+def run(homeassistant: Version, requirements_file: str, run_tests: bool) -> Outcome:
+    """Return how the integration does on a Home Assistant version."""
     python = python_version(homeassistant)
-    return tests_pass_in_venv(homeassistant, requirements_file, run_tests, python)
+    return test_version_in_venv(homeassistant, requirements_file, run_tests, python)
 
 
-def report(version: Version | None, skipped: list[Version]) -> None:
+def report(search: Search) -> None:
     """Write the result to the step outputs, or stdout outside of GitHub Actions."""
     lines = (
-        f"minimum-version={version or ''}\n"
-        f"skipped-versions={', '.join(map(str, skipped))}\n"
+        f"minimum-version={search.version or ''}\n"
+        f"skipped-versions={', '.join(map(str, search.skipped))}\n"
+        f"loads-from={search.loads_from or ''}\n"
     )
     if path := os.environ.get("GITHUB_OUTPUT"):
         with open(path, "a") as file:
@@ -54,18 +77,21 @@ def months(versions: list[Version]) -> list[list[Version]]:
 
 def find(
     minimum: Version, candidates: list[Version], requirements_file: str, run_tests: bool
-) -> tuple[Version | None, list[Version]]:
-    """Return the lowest passing version, if it isn't the minimum, and those skipped."""
-    skipped: list[Version] = []
+) -> Search:
+    """Return the lowest version passing along with those after it, if not the minimum."""
+    search = Search()
 
     def check(version: Version) -> bool:
         """Return whether a version passes, skipping it if it can't be installed."""
         try:
-            return passes(version, requirements_file, run_tests)
+            outcome = run(version, requirements_file, run_tests)
         except SetupFailed:
             print(f"::warning::Skipping Home Assistant {version}", file=sys.stderr)
-            skipped.append(version)
+            search.skipped.append(version)
             return False
+        if outcome.loads:
+            search.loaded_on.append(version)
+        return outcome.passed
 
     def step_back(patches: list[Version], passing: Version | None) -> Version | None:
         """Return the lowest version that passes along with all those after it."""
@@ -79,11 +105,12 @@ def find(
     for index, group in enumerate(groups):
         if not check(group[0]):
             continue
-        if index == 0:
-            return None, skipped
-        return step_back(groups[index - 1][1:], group[0]), skipped
+        if index > 0:
+            search.version = step_back(groups[index - 1][1:], group[0])
+        return search
     # No month started out passing, so only the latest month's patches are left
-    return step_back(groups[-1][1:], None), skipped
+    search.version = step_back(groups[-1][1:], None)
+    return search
 
 
 def main() -> None:
@@ -100,7 +127,7 @@ def main() -> None:
         for version in homeassistant
         if minimum < version <= stable and not version.is_prerelease
     )
-    report(*find(minimum, candidates, requirements_file, run_tests))
+    report(find(minimum, candidates, requirements_file, run_tests))
 
 
 if __name__ == "__main__":
