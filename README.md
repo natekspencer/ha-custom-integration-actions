@@ -28,7 +28,8 @@ so, and updating the tests to work there may be better than raising the minimum.
 ## Usage
 
 Add a `compatibility` job to the integration's validation workflow, here alongside
-hassfest and HACS in `.github/workflows/validate.yml`:
+hassfest and HACS in `.github/workflows/validate.yml`. If the default branch isn't
+`main`, use its name under `push`:
 
 ```yaml
 name: Validate repo
