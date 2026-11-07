@@ -81,7 +81,7 @@ def python_version(homeassistant: Version) -> str:
     requires_python = pypi(f"homeassistant/{homeassistant}")["info"]["requires_python"]
     lower_bounds = [
         Version(specifier.version)
-        for specifier in SpecifierSet(requires_python)
+        for specifier in SpecifierSet(requires_python or "")
         if specifier.operator in (">=", "~=", "==")
     ]
     if not lower_bounds:

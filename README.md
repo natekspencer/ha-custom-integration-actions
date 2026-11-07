@@ -112,6 +112,10 @@ built-in integrations, so the integration often still works there, and raising t
 minimum version wouldn't fix it. `requirements_test.txt` isn't installed yet, so it
 can't hide a missing requirement.
 
+The same warning covers a requirement that imports a package it doesn't declare, for
+the same reason, so a dependency broken that way is only a warning. A requirement that
+is missing part of itself is a failure.
+
 This shows that the integration loads, not that it works, so it doesn't replace real
 tests.
 
@@ -181,8 +185,8 @@ satisfied, the install tries allowing pre-releases, then warns and drops the dat
 
 A release that still can't be installed fails with an error, as it is untested. This
 happens when a very old test package pins something no longer on PyPI. When that is
-the minimum, the search for a new one skips any version it can't install and lists
-them in the bump PR, so check that list before merging.
+the minimum, the search for a new one skips any version it can't look up or install
+and lists them in the bump PR, so check that list before merging.
 
 ## Releasing
 

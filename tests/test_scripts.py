@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from http.client import HTTPException
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -507,6 +508,42 @@ def test_is_real_failure(
     (tmp_path / "namespace_example").mkdir()
     monkeypatch.syspath_prepend(str(tmp_path))
     assert is_real_failure(missing) is expected
+
+
+@pytest.mark.parametrize(
+    "error",
+    [OSError("network"), HTTPException("protocol"), SystemExit("No minimum Python")],
+)
+def test_version_without_python_information_is_skipped(
+    monkeypatch: pytest.MonkeyPatch, error: BaseException
+) -> None:
+    """One release that can't be looked up doesn't stop the search."""
+
+    def fake_python_version(version: Version) -> str:
+        if version == Version("2025.2.0"):
+            raise error
+        return "3.13"
+
+    monkeypatch.setattr(finder, "python_version", fake_python_version)
+    monkeypatch.setattr(
+        finder,
+        "test_version_in_venv",
+        lambda version, *_: runner.Outcome(True, version >= Version("2025.3.0")),
+    )
+    search = finder.find(
+        Version("2025.1.0"), [Version(v) for v in RELEASES], "r.txt", True
+    )
+    assert search.version == Version("2025.3.0")
+    assert search.skipped == [Version("2025.2.0")]
+
+
+def test_python_version_without_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A release that declares no Python requirement is reported, not a crash."""
+    monkeypatch.setattr(
+        resolve_versions, "pypi", lambda _: {"info": {"requires_python": None}}
+    )
+    with pytest.raises(SystemExit, match="No minimum Python"):
+        resolve_versions.python_version(Version("2026.11.0"))
 
 
 def test_report_writes_step_outputs(

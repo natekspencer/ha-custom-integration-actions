@@ -9,7 +9,7 @@ the month before it, as a patch may have fixed the failure, and stops at the fir
 that fails, passing over any that can't be installed. Each runs on the Python version it requires. Reports no version if the tests pass on the minimum or
 fail on all of the newer releases.
 
-A version that can't be installed is skipped and reported, as old test packages
+A version that can't be looked up or installed is skipped and reported, as old test packages
 can pin something that is no longer on PyPI. Stopping there would leave a minimum
 that can never be tested. The result may be higher than needed if a version only
 failed to install temporarily, but it is proposed in a PR for review.
@@ -22,12 +22,18 @@ of most months is tried, so this is accurate to the month.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from http.client import HTTPException
 import os
 import sys
 
 from packaging.version import Version
 from resolve_versions import declared_minimum, python_version, releases
-from run_integration_tests import Outcome, SetupFailed, test_version_in_venv
+from run_integration_tests import (
+    Outcome,
+    SetupFailed,
+    setup_failed,
+    test_version_in_venv,
+)
 
 
 @dataclass
@@ -49,7 +55,11 @@ class Search:
 
 def run(homeassistant: Version, requirements_file: str, run_tests: bool) -> Outcome:
     """Return how the integration does on a Home Assistant version."""
-    python = python_version(homeassistant)
+    try:
+        python = python_version(homeassistant)
+    except (OSError, HTTPException, SystemExit) as err:
+        print(f"No Python version for {homeassistant}: {err}", file=sys.stderr)
+        raise setup_failed(homeassistant) from err
     return test_version_in_venv(homeassistant, requirements_file, run_tests, python)
 
 
