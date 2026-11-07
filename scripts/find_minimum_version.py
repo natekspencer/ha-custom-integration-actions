@@ -4,9 +4,9 @@ Usage: find_minimum_version.py REQUIREMENTS_FILE RUN_TESTS
 
 Retests the minimum first, in case its failure was transient. Then tries the first
 release of each month up to the latest stable one, oldest first, as that is where
-breaking changes land. When one passes, steps back through the patch releases of
-the month before it, as one of those may have fixed the failure. Each runs on the
-Python version it requires. Reports no version if the tests pass on the minimum or
+breaking changes land. When one passes, steps back from the latest patch release of
+the month before it, as a patch may have fixed the failure, and stops at the first
+that fails. Each runs on the Python version it requires. Reports no version if the tests pass on the minimum or
 fail on all of the newer releases.
 
 A version that can't be installed is skipped and reported, as old test packages
@@ -67,16 +67,23 @@ def find(
             skipped.append(version)
             return False
 
+    def step_back(patches: list[Version], passing: Version | None) -> Version | None:
+        """Return the lowest version that passes along with all those after it."""
+        for version in reversed(patches):
+            if not check(version):
+                break
+            passing = version
+        return passing
+
     groups = months([minimum, *candidates])
     for index, group in enumerate(groups):
         if not check(group[0]):
             continue
         if index == 0:
             return None, skipped
-        passing = next(filter(check, groups[index - 1][1:]), group[0])
-        return passing, skipped
+        return step_back(groups[index - 1][1:], group[0]), skipped
     # No month started out passing, so only the latest month's patches are left
-    return next(filter(check, groups[-1][1:]), None), skipped
+    return step_back(groups[-1][1:], None), skipped
 
 
 def main() -> None:

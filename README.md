@@ -17,7 +17,7 @@ has any, and does both on:
 
 When the tests fail on the minimum but pass on stable, it finds the lowest version
 they pass on and opens a PR to update `hacs.json`. It tries the first release of each
-month until one passes, then the patch releases of the month before it. On scheduled runs, a failure on
+month until one passes, then steps back from the latest patch of the month before it. On scheduled runs, a failure on
 stable or a beta opens one issue per monthly release.
 
 ## Usage

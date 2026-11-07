@@ -338,17 +338,33 @@ RELEASES = ["2025.1.1", "2025.2.0", "2025.2.1", "2025.2.2", "2025.3.0", "2025.3.
             "2025.3.0 2025.3.1",
             "",
             "2025.3.0",
-            "2025.1.0 2025.2.0 2025.3.0 2025.2.1 2025.2.2",
+            "2025.1.0 2025.2.0 2025.3.0 2025.2.2",
             "",
-            id="first-month-to-pass",
+            id="latest-patch-fails-so-stop",
         ),
         pytest.param(
             "2025.2.2 2025.3.0 2025.3.1",
             "",
             "2025.2.2",
-            "2025.1.0 2025.2.0 2025.3.0 2025.2.1 2025.2.2",
+            "2025.1.0 2025.2.0 2025.3.0 2025.2.2 2025.2.1",
             "",
-            id="patch-of-previous-month",
+            id="step-back-until-a-patch-fails",
+        ),
+        pytest.param(
+            "2025.2.1 2025.2.2 2025.3.0",
+            "",
+            "2025.2.1",
+            "2025.1.0 2025.2.0 2025.3.0 2025.2.2 2025.2.1",
+            "",
+            id="step-back-through-every-patch",
+        ),
+        pytest.param(
+            "2025.2.1 2025.3.0",
+            "",
+            "2025.3.0",
+            "2025.1.0 2025.2.0 2025.3.0 2025.2.2",
+            "",
+            id="later-patch-broke-it-again",
         ),
         pytest.param(
             "2025.1.1 2025.2.0",
@@ -383,10 +399,10 @@ RELEASES = ["2025.1.1", "2025.2.0", "2025.2.1", "2025.2.2", "2025.3.0", "2025.3.
             id="minimum-cannot-install",
         ),
         pytest.param(
-            "2025.2.1 2025.3.0",
+            "2025.2.1 2025.2.2 2025.3.0",
             "2025.2.0",
             "2025.2.1",
-            "2025.1.0 2025.2.0 2025.3.0 2025.2.1",
+            "2025.1.0 2025.2.0 2025.3.0 2025.2.2 2025.2.1",
             "2025.2.0",
             id="month-cannot-install-but-patch-can",
         ),
@@ -400,7 +416,7 @@ def test_find_minimum(
     tried: str,
     skipped: str,
 ) -> None:
-    """Months are tried first, then the patches of the month before the first pass."""
+    """Months are tried first, then stepping back from the latest patch before it."""
     attempts: list[str] = []
 
     def fake_passes(version: Version, *_: Any) -> bool:
