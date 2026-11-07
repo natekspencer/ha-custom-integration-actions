@@ -8,10 +8,15 @@ on:
         required: false
         type: string
       requirements-file:
-        description: Requirements file of the integration
+        description: Requirements file for the integration's tests, used if it exists
         required: false
         type: string
         default: requirements_test.txt
+      run-tests:
+        description: Run the integration's own tests as well as the standard check
+        required: false
+        type: boolean
+        default: true
     secrets:
       BUMP_PR_TOKEN:
         description: Token for bump PRs, as PRs opened with the default token don't start workflows
@@ -63,14 +68,12 @@ jobs:
           # A beta can require a Python that has no final release yet
           allow-prereleases: true
 
-      - name: Install test requirements
-        uses: natekspencer/ha-custom-integration-actions/actions/install-test-requirements@v0
+      - name: Test integration
+        uses: natekspencer/ha-custom-integration-actions/actions/test-integration@v0
         with:
           homeassistant-version: ${{ matrix.homeassistant-version }}
           requirements-file: ${{ inputs.requirements-file }}
-
-      - name: Run pytest
-        run: python -m pytest
+          run-tests: ${{ inputs.run-tests }}
 
   find-minimum:
     name: Find required minimum
@@ -83,6 +86,8 @@ jobs:
       contents: read
     outputs:
       minimum-version: ${{ steps.find.outputs.minimum-version }}
+      skipped-versions: ${{ steps.find.outputs.skipped-versions }}
+      loads-from: ${{ steps.find.outputs.loads-from }}
     steps:
       - name: Check which versions failed
         id: failed
@@ -109,12 +114,18 @@ jobs:
         uses: natekspencer/ha-custom-integration-actions/actions/find-minimum-version@v0
         with:
           requirements-file: ${{ inputs.requirements-file }}
+          run-tests: ${{ inputs.run-tests }}
 
       - name: Report the required version
         if: steps.find.outputs.minimum-version != ''
         env:
+          LOADS_FROM: ${{ steps.find.outputs.loads-from }}
           VERSION: ${{ steps.find.outputs.minimum-version }}
-        run: echo "::error file=hacs.json::Tests need Home Assistant $VERSION or newer, update hacs.json"
+        run: |
+          echo "::error file=hacs.json::Tests need Home Assistant $VERSION or newer, update hacs.json"
+          if [ -n "$LOADS_FROM" ]; then
+            echo "::notice file=hacs.json::The integration loads from $LOADS_FROM, but its tests only pass from $VERSION, so the tests may be what needs changing"
+          fi
 
   bump-minimum:
     name: Open PR to bump minimum
@@ -147,6 +158,10 @@ jobs:
           title: Require Home Assistant ${{ needs.find-minimum.outputs.minimum-version }}
           body: |
             Tests fail on the minimum version in `hacs.json`. ${{ needs.find-minimum.outputs.minimum-version }} is the lowest version they pass on.
+
+            ${{ needs.find-minimum.outputs.loads-from && format('The integration loads from {0}, but its tests only pass from {1}. If the tests are all that needs the newer version, updating them to work on older versions may be better than merging this, as HACS stops offering updates to users below the minimum.', needs.find-minimum.outputs.loads-from, needs.find-minimum.outputs.minimum-version) || '' }}
+
+            ${{ needs.find-minimum.outputs.skipped-versions && format('These versions could not be installed, so were not tested: {0}', needs.find-minimum.outputs.skipped-versions) || '' }}
 
             Found by ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 

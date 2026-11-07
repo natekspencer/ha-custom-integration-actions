@@ -1,8 +1,7 @@
-#!/usr/bin/env python3
 """Print the GitHub Actions matrix of Home Assistant versions to test against.
 
 Channels:
-  minimum  the version declared in hacs.json
+  minimum  the version declared in hacs.json, if any
   stable   the latest Home Assistant release
   beta     the latest pre-release, while it is newer than stable
   manual   the version passed as an argument, if any
@@ -17,6 +16,7 @@ from __future__ import annotations
 from functools import cache
 from http.client import HTTPException
 import json
+import os
 from pathlib import Path
 import sys
 from time import sleep
@@ -67,9 +67,13 @@ def releases(package: str) -> list[Version]:
     )
 
 
-def declared_minimum() -> Version:
-    """Return the minimum Home Assistant version declared in hacs.json."""
-    return Version(json.loads(Path("hacs.json").read_text())["homeassistant"])
+def declared_minimum() -> Version | None:
+    """Return the minimum Home Assistant version declared in hacs.json, if any."""
+    path = Path("hacs.json")
+    minimum = (
+        json.loads(path.read_text()).get("homeassistant") if path.exists() else None
+    )
+    return Version(minimum) if minimum else None
 
 
 def python_version(homeassistant: Version) -> str:
@@ -77,7 +81,7 @@ def python_version(homeassistant: Version) -> str:
     requires_python = pypi(f"homeassistant/{homeassistant}")["info"]["requires_python"]
     lower_bounds = [
         Version(specifier.version)
-        for specifier in SpecifierSet(requires_python)
+        for specifier in SpecifierSet(requires_python or "")
         if specifier.operator in (">=", "~=", "==")
     ]
     if not lower_bounds:
@@ -88,14 +92,37 @@ def python_version(homeassistant: Version) -> str:
     return f"{minimum.major}.{minimum.minor}"
 
 
+def report(include: list[dict[str, str]]) -> None:
+    """Show the versions in the log and, in GitHub Actions, the run's summary."""
+    table = "\n".join(
+        (
+            "| Channel | Home Assistant | Python |",
+            "| --- | --- | --- |",
+            *(
+                f"| {entry['channel']} | {entry['homeassistant-version']} "
+                f"| {entry['python-version']} |"
+                for entry in include
+            ),
+        )
+    )
+    print(table, file=sys.stderr)
+    if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(summary, "a") as file:
+            file.write(f"### Home Assistant versions\n\n{table}\n")
+
+
 def main() -> None:
     """Print the matrix as JSON."""
     homeassistant = releases("homeassistant")
     stable = next(version for version in homeassistant if not version.is_prerelease)
-    channels = {
-        "minimum": declared_minimum(),
-        "stable": stable,
-    }
+    channels = {"stable": stable}
+    if minimum := declared_minimum():
+        channels = {"minimum": minimum, **channels}
+    else:
+        print(
+            "::warning::No homeassistant version in hacs.json, so no minimum to test",
+            file=sys.stderr,
+        )
     if homeassistant[0] > stable:
         channels["beta"] = homeassistant[0]
     if len(sys.argv) > 1 and sys.argv[1]:
@@ -109,6 +136,7 @@ def main() -> None:
         }
         for channel, version in channels.items()
     ]
+    report(include)
     print(json.dumps({"include": include}))
 
 

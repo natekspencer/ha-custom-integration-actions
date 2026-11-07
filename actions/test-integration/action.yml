@@ -1,0 +1,27 @@
+name: Test integration
+description: Check that an integration loads on a Home Assistant version, then run its tests
+inputs:
+  homeassistant-version:
+    description: Home Assistant version to test on
+    required: true
+  requirements-file:
+    description: Requirements file for the integration's tests, used if it exists
+    required: false
+    default: requirements_test.txt
+  run-tests:
+    description: Run the integration's own tests as well as the standard check
+    required: false
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - name: Test integration
+      shell: bash
+      env:
+        HOMEASSISTANT_VERSION: ${{ inputs.homeassistant-version }}
+        REQUIREMENTS_FILE: ${{ inputs.requirements-file }}
+        RUN_TESTS: ${{ inputs.run-tests }}
+      run: |
+        python -m pip install packaging uv
+        python "$GITHUB_ACTION_PATH/../../scripts/run_integration_tests.py" \
+          "$HOMEASSISTANT_VERSION" "$REQUIREMENTS_FILE" "$RUN_TESTS"
