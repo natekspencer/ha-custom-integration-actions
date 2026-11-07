@@ -15,8 +15,8 @@ that can never be tested. The result may be higher than needed if a version only
 failed to install temporarily, but it is proposed in a PR for review.
 
 Also reports the lowest version the integration loaded on, when that is below the
-result, as its tests may just be behind. Only the first release of most months is
-tried, so this is accurate to the month.
+result, as its tests may be all that needs the newer version. Only the first release
+of most months is tried, so this is accurate to the month.
 """
 
 from __future__ import annotations

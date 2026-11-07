@@ -23,7 +23,7 @@ stable or a beta opens one issue per monthly release.
 Review bump PRs before merging, as HACS stops offering updates to users below the
 minimum. The new minimum is the lowest version everything passes on, which can be held
 back by the tests alone. If the integration loads on an earlier version, the PR says
-so, and fixing the tests may be better than raising the minimum.
+so, and updating the tests to work there may be better than raising the minimum.
 
 ## Usage
 
