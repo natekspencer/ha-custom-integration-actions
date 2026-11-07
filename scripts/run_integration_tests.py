@@ -1,4 +1,4 @@
-"""Test an integration on a Home Assistant version in the active Python.
+"""Test an integration on a Home Assistant version.
 
 Usage: run_integration_tests.py HOMEASSISTANT_VERSION REQUIREMENTS_FILE RUN_TESTS
 
@@ -105,11 +105,30 @@ def tests_pass(
     return own_tests_pass(python) and loads
 
 
+def tests_pass_in_venv(
+    homeassistant: Version,
+    requirements_file: str,
+    run_tests: bool,
+    python_request: str,
+) -> bool:
+    """Return whether the integration passes in a new virtual environment.
+
+    Home Assistant pins uv as a dependency, so installing it next to the uv running
+    the install would replace that with a version that may not support our options.
+    """
+    with TemporaryDirectory() as tmp:
+        venv = Path(tmp, "venv")
+        if run("uv", "venv", "--python", python_request, venv) != 0:
+            raise setup_failed(homeassistant)
+        python = venv / "bin" / "python"
+        return tests_pass(homeassistant, requirements_file, python, run_tests)
+
+
 def main() -> None:
     """Test the integration, exiting with an error if it fails."""
     homeassistant, requirements_file, run_tests = sys.argv[1:4]
-    if not tests_pass(
-        Version(homeassistant), requirements_file, sys.executable, run_tests == "true"
+    if not tests_pass_in_venv(
+        Version(homeassistant), requirements_file, run_tests == "true", sys.executable
     ):
         raise SystemExit(1)
 

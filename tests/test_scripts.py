@@ -304,6 +304,26 @@ def later():
     }
 
 
+def test_tests_run_in_a_new_venv(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Installing Home Assistant must not replace the uv doing the install."""
+    commands: list[tuple[str, ...]] = []
+    tested: list[Path] = []
+
+    def fake_run(*command: str | Path) -> int:
+        commands.append(tuple(map(str, command)))
+        return 0
+
+    def fake_tests_pass(_: Version, __: str, python: Path, ___: bool) -> bool:
+        tested.append(python)
+        return True
+
+    monkeypatch.setattr(runner, "run", fake_run)
+    monkeypatch.setattr(runner, "tests_pass", fake_tests_pass)
+    assert runner.tests_pass_in_venv(Version("2026.11.0"), "r.txt", True, "3.14")
+    assert commands[0][:4] == ("uv", "venv", "--python", "3.14")
+    assert tested == [Path(commands[0][4], "bin", "python")]
+
+
 def test_no_hacs_json_has_no_minimum(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

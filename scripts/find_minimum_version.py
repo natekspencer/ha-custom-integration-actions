@@ -10,14 +10,11 @@ newer releases.
 
 from __future__ import annotations
 
-from pathlib import Path
 import sys
-from tempfile import TemporaryDirectory
 
-from install_test_requirements import run
 from packaging.version import Version
 from resolve_versions import declared_minimum, python_version, releases
-from run_integration_tests import setup_failed, tests_pass
+from run_integration_tests import tests_pass_in_venv
 
 
 def passes(homeassistant: Version, requirements_file: str, run_tests: bool) -> bool:
@@ -26,12 +23,8 @@ def passes(homeassistant: Version, requirements_file: str, run_tests: bool) -> b
     Exits if the version can't be set up: it is untested, so moving on to a newer
     version could choose a minimum that is higher than needed.
     """
-    with TemporaryDirectory() as tmp:
-        venv = Path(tmp, "venv")
-        if run("uv", "venv", "--python", python_version(homeassistant), venv) != 0:
-            raise setup_failed(homeassistant)
-        python = venv / "bin" / "python"
-        return tests_pass(homeassistant, requirements_file, python, run_tests)
+    python = python_version(homeassistant)
+    return tests_pass_in_venv(homeassistant, requirements_file, run_tests, python)
 
 
 def main() -> None:
