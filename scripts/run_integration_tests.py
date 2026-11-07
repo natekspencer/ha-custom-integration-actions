@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Test an integration on a Home Assistant version in the active Python.
 
 Usage: run_integration_tests.py HOMEASSISTANT_VERSION REQUIREMENTS_FILE RUN_TESTS

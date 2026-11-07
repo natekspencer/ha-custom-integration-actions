@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Print the lowest Home Assistant version newer than hacs.json that tests pass on.
 
 Usage: find_minimum_version.py REQUIREMENTS_FILE RUN_TESTS

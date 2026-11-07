@@ -12,6 +12,7 @@ still works there, and raising the minimum version wouldn't fix it.
 from __future__ import annotations
 
 from importlib import import_module
+from importlib.util import find_spec
 from pathlib import Path
 
 import pytest
@@ -49,9 +50,13 @@ def test_module_imports(module: str, capsys: pytest.CaptureFixture[str]) -> None
         import_module(module)
     except ModuleNotFoundError as err:
         missing = err.name or ""
-        if missing.partition(".")[0] in OWN_PACKAGES:
+        package = missing.partition(".")[0]
+        # Part of an installed package is missing, so the package itself is broken
+        if not package or package in OWN_PACKAGES or find_spec(package):
             raise
-        message = f"{module} needs {missing}, which the manifest requirements don't provide"
+        message = (
+            f"{module} needs {missing}, which the manifest requirements don't provide"
+        )
         if missing not in reported:
             reported.add(missing)
             manifest = Path(*module.split(".")[:2], "manifest.json")

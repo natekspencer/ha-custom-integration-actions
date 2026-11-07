@@ -64,7 +64,9 @@ def fake_pypi(monkeypatch: pytest.MonkeyPatch) -> None:
     ("homeassistant", "expected"),
     [("2025.11.0", "3.13"), ("2026.11.0", "3.14"), ("2026.12.0b1", "3.15")],
 )
-def test_python_version_follows_homeassistant(homeassistant: str, expected: str) -> None:
+def test_python_version_follows_homeassistant(
+    homeassistant: str, expected: str
+) -> None:
     """Each release uses the Python it requires."""
     assert resolve_versions.python_version(Version(homeassistant)) == expected
 
@@ -128,9 +130,7 @@ def test_test_package(homeassistant: str, expected: str) -> None:
 
 def test_release_date_is_the_last_upload() -> None:
     """All of a release's files are published by the limit."""
-    assert (
-        install_module.release_date(Version("2025.11.0")) == "2025-11-05T19:46:00Z"
-    )
+    assert install_module.release_date(Version("2025.11.0")) == "2025-11-05T19:46:00Z"
 
 
 def test_named_packages(tmp_path: Path) -> None:
@@ -259,9 +259,7 @@ def test_tests_pass(
     monkeypatch.setattr(runner, "install_manifest_requirements", lambda *_: None)
     monkeypatch.setattr(runner, "integration_loads", lambda _: loads)
     monkeypatch.setattr(runner, "run", lambda *_, **__: own_code)
-    assert (
-        runner.tests_pass(Version("2026.11.0"), "missing.txt", "python") is expected
-    )
+    assert runner.tests_pass(Version("2026.11.0"), "missing.txt", "python") is expected
 
 
 def test_run_tests_false_only_checks_loading(
@@ -273,6 +271,37 @@ def test_run_tests_false_only_checks_loading(
     monkeypatch.setattr(runner, "integration_loads", lambda _: True)
     monkeypatch.setattr(runner, "run", lambda *_, **__: pytest.fail("pytest ran"))
     assert runner.tests_pass(Version("2026.11.0"), "missing.txt", "python", False)
+
+
+def test_imported_components_only_counts_real_imports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every import form counts, but comments, strings and bad syntax don't."""
+    domain = tmp_path / "custom_components" / "example"
+    domain.mkdir(parents=True)
+    (domain / "a.py").write_text(
+        """
+# homeassistant.components.hue
+\"\"\"See homeassistant.components.zha.\"\"\"
+from homeassistant.components import dhcp, zeroconf as zc
+from homeassistant.components.camera import Camera
+from . import homeassistant
+import homeassistant.components.http.view
+
+
+def later():
+    from homeassistant.components import bluetooth
+"""
+    )
+    (domain / "broken.py").write_text("from homeassistant.components.mqtt import (\n")
+    monkeypatch.chdir(tmp_path)
+    assert install_module.imported_components() == {
+        "bluetooth",
+        "camera",
+        "dhcp",
+        "http",
+        "zeroconf",
+    }
 
 
 def test_no_hacs_json_has_no_minimum(

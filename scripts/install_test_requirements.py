@@ -12,10 +12,10 @@ example because a requirement needs something newer, the date limit is dropped.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import ast
+from collections.abc import Iterator, Mapping
 import json
 from pathlib import Path
-import re
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
@@ -29,7 +29,7 @@ from resolve_versions import pypi, releases
 TEST_PACKAGE = "pytest-homeassistant"
 # Covers older versions. Remove once no integration tests below 2026.11.
 LEGACY_TEST_PACKAGE = "pytest-homeassistant-custom-component"
-COMPONENT_IMPORT = re.compile(r"\bhomeassistant\.components\.(\w+)")
+COMPONENTS_PACKAGE = ["homeassistant", "components"]
 
 
 def homeassistant_pin(requires: list[str]) -> Version | None:
@@ -104,6 +104,28 @@ def dependencies(manifest: dict[str, Any]) -> list[str]:
     return manifest.get("dependencies", []) + manifest.get("after_dependencies", [])
 
 
+def component_of(module: str) -> str | None:
+    """Return the Home Assistant integration a module belongs to, if any."""
+    parts = module.split(".")
+    return parts[2] if len(parts) > 2 and parts[:2] == COMPONENTS_PACKAGE else None
+
+
+def imports_in(source: str) -> Iterator[str]:
+    """Yield the modules imported by Python source, at any level of the code."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        # The load check reports this
+        return
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            yield from (alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            yield node.module
+            # Each name might be a module, as in `from homeassistant.components import dhcp`
+            yield from (f"{node.module}.{alias.name}" for alias in node.names)
+
+
 def imported_components() -> set[str]:
     """Return the Home Assistant integrations the code imports from.
 
@@ -113,7 +135,8 @@ def imported_components() -> set[str]:
     return {
         domain
         for path in Path("custom_components").rglob("*.py")
-        for domain in COMPONENT_IMPORT.findall(path.read_text())
+        for module in imports_in(path.read_text())
+        if (domain := component_of(module))
     }
 
 

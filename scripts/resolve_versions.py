@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Print the GitHub Actions matrix of Home Assistant versions to test against.
 
 Channels:
@@ -71,7 +70,9 @@ def releases(package: str) -> list[Version]:
 def declared_minimum() -> Version | None:
     """Return the minimum Home Assistant version declared in hacs.json, if any."""
     path = Path("hacs.json")
-    minimum = json.loads(path.read_text()).get("homeassistant") if path.exists() else None
+    minimum = (
+        json.loads(path.read_text()).get("homeassistant") if path.exists() else None
+    )
     return Version(minimum) if minimum else None
 
 
