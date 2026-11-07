@@ -85,8 +85,14 @@ def test_matrix(
     (tmp_path / "hacs.json").write_text('{"homeassistant": "2025.11.0"}')
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["resolve_versions.py", ""])
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
     resolve_versions.main()
-    assert json.loads(capsys.readouterr().out)["include"] == [
+    captured = capsys.readouterr()
+    row = "| minimum | 2025.11.0 | 3.13 |"
+    assert row in captured.err
+    assert row in summary.read_text()
+    assert json.loads(captured.out)["include"] == [
         {
             "channel": "minimum",
             "homeassistant-version": "2025.11.0",

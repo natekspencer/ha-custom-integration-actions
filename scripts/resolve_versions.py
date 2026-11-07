@@ -17,6 +17,7 @@ from __future__ import annotations
 from functools import cache
 from http.client import HTTPException
 import json
+import os
 from pathlib import Path
 import sys
 from time import sleep
@@ -88,6 +89,25 @@ def python_version(homeassistant: Version) -> str:
     return f"{minimum.major}.{minimum.minor}"
 
 
+def report(include: list[dict[str, str]]) -> None:
+    """Show the versions in the log and, in GitHub Actions, the run's summary."""
+    table = "\n".join(
+        (
+            "| Channel | Home Assistant | Python |",
+            "| --- | --- | --- |",
+            *(
+                f"| {entry['channel']} | {entry['homeassistant-version']} "
+                f"| {entry['python-version']} |"
+                for entry in include
+            ),
+        )
+    )
+    print(table, file=sys.stderr)
+    if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(summary, "a") as file:
+            file.write(f"### Home Assistant versions\n\n{table}\n")
+
+
 def main() -> None:
     """Print the matrix as JSON."""
     homeassistant = releases("homeassistant")
@@ -109,6 +129,7 @@ def main() -> None:
         }
         for channel, version in channels.items()
     ]
+    report(include)
     print(json.dumps({"include": include}))
 
 

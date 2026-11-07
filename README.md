@@ -20,10 +20,10 @@ stable or a beta opens one issue per monthly release.
 
 ## Usage
 
-Add `.github/workflows/tests.yml` to the integration:
+Add `.github/workflows/compatibility.yml` to the integration:
 
 ```yaml
-name: Tests
+name: Home Assistant compatibility
 
 on:
   push:
@@ -76,6 +76,11 @@ file and pytest configuration.
 | Secret          | Description                                                                                                             |
 | --------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `BUMP_PR_TOKEN` | Optional token for bump PRs. Without it the PR is opened with `GITHUB_TOKEN`, and GitHub won't start its workflows. |
+
+## Resolved versions
+
+The versions and Python each channel resolved to appear at the top of the run's
+summary page, and in the log of the `Resolve Home Assistant versions` job.
 
 ## Python versions
 
