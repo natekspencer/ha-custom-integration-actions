@@ -16,13 +16,13 @@ has any, and does both on:
 | `manual`  | The `homeassistant-version` input, if given         |
 
 When the tests fail on the minimum but pass on stable, it finds the lowest version
-they pass on and opens a PR to update `hacs.json`. It tries the first release of each
+they pass on and, on the `main` branch, opens a PR to update `hacs.json`. It tries the first release of each
 month until one passes, then steps back from the latest patch of the month before it. On scheduled runs, a failure on
 stable or a beta opens one issue per monthly release.
 
 Review bump PRs before merging, as HACS stops offering updates to users below the
-minimum. The new minimum is the lowest version everything passes on, which can be held
-back by the tests alone. If the integration loads on an earlier version, the PR says
+minimum. The new minimum is the lowest version the search found that everything passes
+on, which can be held back by the tests alone. If the integration loads on an earlier version, the PR says
 so, and updating the tests to work there may be better than raising the minimum.
 
 ## Usage

@@ -12,9 +12,9 @@ still works there, and raising the minimum version wouldn't fix it.
 from __future__ import annotations
 
 from importlib import import_module
-from importlib.util import find_spec
 from pathlib import Path
 
+from import_failures import is_real_failure
 import pytest
 
 from homeassistant import loader
@@ -33,7 +33,6 @@ MODULES = sorted(
     for domain in DOMAINS
     for path in (COMPONENTS / domain).rglob("*.py")
 )
-OWN_PACKAGES = ("custom_components", "homeassistant")
 
 reported: set[str] = set()
 
@@ -50,9 +49,7 @@ def test_module_imports(module: str, capsys: pytest.CaptureFixture[str]) -> None
         import_module(module)
     except ModuleNotFoundError as err:
         missing = err.name or ""
-        package = missing.partition(".")[0]
-        # Part of an installed package is missing, so the package itself is broken
-        if not package or package in OWN_PACKAGES or find_spec(package):
+        if is_real_failure(missing):
             raise
         message = (
             f"{module} needs {missing}, which the manifest requirements don't provide"

@@ -6,7 +6,7 @@ Retests the minimum first, in case its failure was transient. Then tries the fir
 release of each month up to the latest stable one, oldest first, as that is where
 breaking changes land. When one passes, steps back from the latest patch release of
 the month before it, as a patch may have fixed the failure, and stops at the first
-that fails. Each runs on the Python version it requires. Reports no version if the tests pass on the minimum or
+that fails, passing over any that can't be installed. Each runs on the Python version it requires. Reports no version if the tests pass on the minimum or
 fail on all of the newer releases.
 
 A version that can't be installed is skipped and reported, as old test packages
@@ -96,9 +96,10 @@ def find(
     def step_back(patches: list[Version], passing: Version | None) -> Version | None:
         """Return the lowest version that passes along with all those after it."""
         for version in reversed(patches):
-            if not check(version):
+            if check(version):
+                passing = version
+            elif version not in search.skipped:
                 break
-            passing = version
         return passing
 
     groups = months([minimum, *candidates])

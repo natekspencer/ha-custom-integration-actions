@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import find_minimum_version as finder
+from import_failures import is_real_failure
 import install_test_requirements as install_module
 from packaging.version import Version
 import pytest
@@ -401,6 +402,14 @@ RELEASES = ["2025.1.1", "2025.2.0", "2025.2.1", "2025.2.2", "2025.3.0", "2025.3.
             id="minimum-cannot-install",
         ),
         pytest.param(
+            "2025.2.1 2025.3.0",
+            "2025.2.2",
+            "2025.2.1",
+            "2025.1.0 2025.2.0 2025.3.0 2025.2.2 2025.2.1",
+            "2025.2.2",
+            id="step-back-passes-over-a-patch-that-cannot-install",
+        ),
+        pytest.param(
             "2025.2.1 2025.2.2 2025.3.0",
             "2025.2.0",
             "2025.2.1",
@@ -477,6 +486,27 @@ def test_find_minimum_main(
     assert capsys.readouterr().out == (
         "minimum-version=2026.11.0\nskipped-versions=\nloads-from=2025.11.0\n"
     )
+
+
+@pytest.mark.parametrize(
+    ("missing", "expected"),
+    [
+        pytest.param("not_a_real_package", False, id="package-not-installed"),
+        pytest.param("not_a_real_package.part", False, id="part-of-missing-package"),
+        pytest.param("namespace_example.part", False, id="part-of-namespace-package"),
+        pytest.param("json.not_a_real_part", True, id="part-of-installed-package"),
+        pytest.param("homeassistant.not_a_real_part", True, id="home-assistant"),
+        pytest.param("custom_components.example.const", True, id="integration"),
+        pytest.param("", True, id="unknown"),
+    ],
+)
+def test_is_real_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: str, expected: bool
+) -> None:
+    """Only a package that isn't installed counts as an undeclared requirement."""
+    (tmp_path / "namespace_example").mkdir()
+    monkeypatch.syspath_prepend(str(tmp_path))
+    assert is_real_failure(missing) is expected
 
 
 def test_report_writes_step_outputs(
